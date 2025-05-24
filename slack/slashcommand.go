@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/developertom01/go-kudos/data"
 	"github.com/developertom01/go-kudos/services"
 	"github.com/slack-go/slack"
 )
@@ -45,26 +46,29 @@ func parseCommandText(text string) (*Kudos, error) {
 	return nil, invalidCommandError
 }
 
-func handleSlashCommand(slashCommand slack.SlashCommand, service *services.KudosService, slackApi *slack.Client) error {
+func handleSlashCommand(slashCommand slack.SlashCommand, service *services.KudosService, slackApi *slack.Client, database *data.Database) error {
 	kudos, err := parseCommandText(slashCommand.Text)
+
 	if err != nil {
 		return err
 	}
 
-	var orgId = slashCommand.EnterpriseID
+	kudos.Username = strings.TrimPrefix(kudos.Username, "@")
 
+	var orgId = slashCommand.EnterpriseID
 	if orgId == "" {
 		orgId = slashCommand.TeamID
 	}
 
 	kudosPayload := services.KudosPayload{
 		OrganizationId: orgId,
-		Username:       kudos.Username,
+		ToUsername:       kudos.Username,
 		Description:    *kudos.Description,
-		Platform:       services.SlackPlatform,
+		InstallationId: slashCommand.APIAppID,
+		FromUsername:     slashCommand.UserName,
 	}
 
-	kudosResponse, err := service.HandleKudos(kudosPayload)
+	kudosResponse, err := service.HandleKudos(kudosPayload, database)
 
 	// Send the response back to Slack as thread
 

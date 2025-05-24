@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/developertom01/go-kudos/data"
 	"github.com/developertom01/go-kudos/services"
 	"github.com/developertom01/go-kudos/slack/config"
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,12 @@ import (
 func main() {
 	services := services.NewKudosService()
 	slackApi := slack.New(config.SLACK_API_TOKEN)
+	database, err := data.NewDatabase("")
+
+	if err != nil {
+		panic(err)
+	}
+
 
 	r := gin.Default()
 	r.GET(config.KUDOS_SLASH_COMMAND, func(c *gin.Context) {
@@ -22,7 +29,7 @@ func main() {
 			return
 		}
 
-		err = handleSlashCommand(slashCommand, services, slackApi)
+		err = handleSlashCommand(slashCommand, services, slackApi, database)
 
 		if err != nil {
 			c.JSON(400, gin.H{
