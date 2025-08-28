@@ -42,7 +42,7 @@ func handleSlackLogin(c *gin.Context) {
 	
 	// Build the authorization URL
 	authURL := fmt.Sprintf(
-		"https://slack.com/oauth/v2/authorize?client_id=%s&scope=commands,chat:write&redirect_uri=%s&state=%s",
+		"https://slack.com/oauth/v2/authorize?client_id=%s&scope=commands,chat:write,users:read&redirect_uri=%s&state=%s",
 		url.QueryEscape(config.SLACK_CLIENT_ID),
 		url.QueryEscape(config.REDIRECT_URI),
 		state,
