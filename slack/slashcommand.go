@@ -47,6 +47,15 @@ func parseCommandText(text string) (*Kudos, error) {
 }
 
 func handleSlashCommand(slashCommand slack.SlashCommand, service *services.KudosService, slackApi *slack.Client, database *data.Database) error {
+	// Get installation for this team to use the correct token
+	installation, err := database.GetInstallationByTeamID(slashCommand.TeamID)
+	if err != nil {
+		return errors.New("App not installed for this workspace")
+	}
+	
+	// Create client with the installation's bot token
+	installedSlackApi := slack.New(installation.BotUserOAuthToken)
+	
 	kudos, err := parseCommandText(slashCommand.Text)
 
 	if err != nil {
@@ -70,9 +79,12 @@ func handleSlashCommand(slashCommand slack.SlashCommand, service *services.Kudos
 
 	kudosResponse, err := service.HandleKudos(kudosPayload, database)
 
-	// Send the response back to Slack as thread
+	if err != nil {
+		return err
+	}
 
-	text, atch, err := slackApi.PostMessage(slashCommand.ChannelID, slack.MsgOptionText(
+	// Send the response back to Slack using the installation-specific client
+	text, atch, err := installedSlackApi.PostMessage(slashCommand.ChannelID, slack.MsgOptionText(
 		fmt.Sprintf("Kudos to %s for %s", kudos.Username, *kudos.Description), false),
 		slack.MsgOptionText(fmt.Sprintf("You now have %d kudos", kudosResponse.Total), false),
 		slack.MsgOptionTS(slashCommand.TriggerID),
@@ -83,11 +95,10 @@ func handleSlashCommand(slashCommand slack.SlashCommand, service *services.Kudos
 	)
 
 	if err != nil {
-
 		return err
 	}
 
 	fmt.Println("kudosResponse", text, atch)
 
-	return err
+	return nil
 }
