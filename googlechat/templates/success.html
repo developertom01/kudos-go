@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kudos App Installation</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .success { color: #2eb886; }
+        .error { color: #e01e5a; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="success">🎉 Success!</h1>
+        <p>{{.message}}</p>
+        <p>Team: <strong>{{.team_name}}</strong></p>
+        <p>You can now use the <code>/kudos</code> command in your workspace!</p>
+        <hr>
+        <p><small>You can close this window and return to your workspace.</small></p>
+    </div>
+</body>
+</html>
