@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,7 +28,11 @@ type SlackOAuthResponse struct {
 	TeamName         string `json:"team_name"`
 	BotUserID        string `json:"bot_user_id"`
 	IncomingWebhook  map[string]interface{} `json:"incoming_webhook"`
-	Bot              map[string]interface{} `json:"bot"`
+	Bot              struct {
+		BotUserID      string `json:"bot_user_id"`
+		BotAccessToken string `json:"bot_access_token"`
+	} `json:"bot"`
+	Error            string `json:"error,omitempty"`
 }
 
 // handleSlackLogin initiates the Slack OAuth flow
@@ -52,7 +57,13 @@ func handleSlackLogin(c *gin.Context) {
 // handleSlackCallback handles the OAuth callback from Slack
 func handleSlackCallback(c *gin.Context, database *data.Database) {
 	code := c.Query("code")
+	errorParam := c.Query("error")
 	// state := c.Query("state") // TODO: In production, verify state parameter
+	
+	if errorParam != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OAuth authorization denied: " + errorParam})
+		return
+	}
 	
 	if code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing authorization code"})
@@ -62,11 +73,13 @@ func handleSlackCallback(c *gin.Context, database *data.Database) {
 	// Exchange code for access token
 	oauthResponse, err := exchangeCodeForToken(code)
 	if err != nil {
+		fmt.Printf("OAuth token exchange error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
 		return
 	}
 	
 	if !oauthResponse.OK {
+		fmt.Printf("OAuth response not OK: %s\n", oauthResponse.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth exchange failed"})
 		return
 	}
@@ -74,19 +87,17 @@ func handleSlackCallback(c *gin.Context, database *data.Database) {
 	// Create or get organization
 	org, err := database.CreateOrganization(oauthResponse.TeamName)
 	if err != nil {
+		fmt.Printf("Organization creation error: %v\n", err)
 		// If organization already exists, try to get it
 		// For now, we'll use a simple approach
 		org = &data.Organization{ID: 1, Name: oauthResponse.TeamName}
 	}
 	
 	// Extract bot token from response
-	botToken := ""
-	if bot, ok := oauthResponse.Bot["bot_access_token"].(string); ok {
-		botToken = bot
-	}
+	botToken := oauthResponse.Bot.BotAccessToken
 	
 	// Store installation in database
-	_, err = database.CreateInstallation(
+	installation, err := database.CreateInstallation(
 		"slack",
 		org.ID,
 		oauthResponse.TeamID,
@@ -97,9 +108,13 @@ func handleSlackCallback(c *gin.Context, database *data.Database) {
 	)
 	
 	if err != nil {
+		fmt.Printf("Installation creation error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store installation"})
 		return
 	}
+	
+	fmt.Printf("Successfully installed app for team %s (ID: %s) with installation ID: %d\n", 
+		oauthResponse.TeamName, oauthResponse.TeamID, installation.ID)
 	
 	c.HTML(http.StatusOK, "success.html", gin.H{
 		"team_name": oauthResponse.TeamName,
@@ -130,16 +145,15 @@ func exchangeCodeForToken(code string) (*SlackOAuthResponse, error) {
 		return nil, err
 	}
 	
-	// For demonstration purposes, we'll use the body variable
-	_ = body
+	// Parse JSON response
+	err = json.Unmarshal(body, &oauthResponse)
+	if err != nil {
+		return nil, err
+	}
 	
-	// For simplicity, we'll create a mock response
-	// In a real implementation, you'd properly unmarshal the JSON
-	oauthResponse = SlackOAuthResponse{
-		OK:          true,
-		AccessToken: "xoxp-example",
-		TeamID:      "T1234567890",
-		TeamName:    "Example Team",
+	// Check for OAuth errors
+	if !oauthResponse.OK {
+		return nil, fmt.Errorf("OAuth error: %s", oauthResponse.Error)
 	}
 	
 	return &oauthResponse, nil
