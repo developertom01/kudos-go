@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,6 +17,37 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// StateStore manages OAuth state parameters for security
+type StateStore struct {
+	states map[string]time.Time
+}
+
+var stateStore = &StateStore{
+	states: make(map[string]time.Time),
+}
+
+// generateSecureState generates a cryptographically secure state parameter
+func generateSecureState() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+// storeState stores a state parameter with expiration
+func (s *StateStore) storeState(state string) {
+	s.states[state] = time.Now().Add(10 * time.Minute) // 10 minute expiration
+}
+
+// validateState validates and removes an expired state parameter
+func (s *StateStore) validateState(state string) bool {
+	if expiry, exists := s.states[state]; exists {
+		delete(s.states, state)
+		return time.Now().Before(expiry)
+	}
+	return false
+}
 // GoogleChatOAuthResponse represents the response from Google OAuth
 type GoogleChatOAuthResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -42,14 +75,19 @@ func getGoogleOAuthConfig() *oauth2.Config {
 func handleGoogleChatLogin(c *gin.Context) {
 	oauthConfig := getGoogleOAuthConfig()
 	
-	// Generate state parameter for security
-	state := fmt.Sprintf("state_%d", time.Now().Unix())
+	// Generate secure state parameter for CSRF protection
+	state, err := generateSecureState()
+	if err != nil {
+		fmt.Printf("Failed to generate state: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initiate authentication"})
+		return
+	}
 	
-	// Build the authorization URL
+	// Store state for later verification
+	stateStore.storeState(state)
+	
+	// Build the authorization URL with state parameter
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	
-	// In production, you should store the state parameter for verification
-	_ = state
 	
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
@@ -58,15 +96,23 @@ func handleGoogleChatLogin(c *gin.Context) {
 func handleGoogleChatCallback(c *gin.Context, database *data.Database) {
 	code := c.Query("code")
 	errorParam := c.Query("error")
-	// state := c.Query("state") // TODO: In production, verify state parameter
+	state := c.Query("state")
 	
 	if errorParam != "" {
+		fmt.Printf("OAuth authorization error: %s\n", errorParam)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "OAuth authorization denied: " + errorParam})
 		return
 	}
 	
 	if code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing authorization code"})
+		return
+	}
+	
+	// Verify state parameter for CSRF protection
+	if state == "" || !stateStore.validateState(state) {
+		fmt.Printf("Invalid or expired state parameter: %s\n", state)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired authentication request"})
 		return
 	}
 	
@@ -134,9 +180,21 @@ func handleGoogleChatCallback(c *gin.Context, database *data.Database) {
 func verifyGoogleChatRequest(c *gin.Context) bool {
 	// Google Chat uses a token-based verification
 	token := c.GetHeader("Authorization")
+	
+	// Check if webhook token is configured
+	if config.GOOGLE_CHAT_WEBHOOK_TOKEN == "" {
+		fmt.Printf("Warning: GOOGLE_CHAT_WEBHOOK_TOKEN not configured\n")
+		return false
+	}
+	
 	expectedToken := "Bearer " + config.GOOGLE_CHAT_WEBHOOK_TOKEN
 	
-	return token == expectedToken
+	if token != expectedToken {
+		fmt.Printf("Invalid webhook token. Expected: %s, Got: %s\n", expectedToken, token)
+		return false
+	}
+	
+	return true
 }
 
 // authMiddleware is a middleware that verifies Google Chat requests
@@ -150,14 +208,15 @@ func authMiddleware(database *data.Database) gin.HandlerFunc {
 			return
 		}
 		
-		// Only verify POST requests (chat commands)
-		if c.Request.Method != "POST" {
-			c.Next()
-			return
+		// Only verify POST requests to webhook endpoints
+		if c.Request.Method == "POST" && c.Request.URL.Path == "/googlechat/webhook" {
+			if !verifyGoogleChatRequest(c) {
+				fmt.Printf("Authentication failed for webhook request from %s\n", c.ClientIP())
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+				c.Abort()
+				return
+			}
 		}
-		
-		// For now, we'll skip token verification to get the basic flow working
-		// In production, you should implement proper token verification
 		
 		c.Next()
 	}

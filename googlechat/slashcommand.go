@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 
@@ -103,20 +104,29 @@ func handleGoogleChatCommand(event GoogleChatEvent, service *services.KudosServi
 	// Extract team/space ID from the space name
 	spaceID := event.Space.Name
 	
+	if spaceID == "" {
+		log.Printf("Missing space ID in event")
+		return nil, errors.New("Invalid space information")
+	}
+	
 	// Get installation for this space to use the correct token
 	installation, err := database.GetInstallationByTeamID(spaceID)
 	if err != nil {
-		return nil, errors.New("App not installed for this Google Chat space")
+		log.Printf("Installation not found for space %s: %v", spaceID, err)
+		return nil, errors.New("App not installed for this Google Chat space. Please visit /auth/googlechat to install.")
 	}
 	
 	// Parse the command text
 	kudos, err := parseCommandText(event.Message.ArgumentText)
 	if err != nil {
-		return nil, err
+		log.Printf("Command parsing error: %v", err)
+		return nil, fmt.Errorf("❌ %s\n\nUsage: `/kudos @user description` or `/kudos <users/USER_ID> description`", err.Error())
 	}
 
 	// Resolve Google Chat user ID to username if needed
 	if kudos.UserID != "" {
+		log.Printf("Resolving user ID: %s", kudos.UserID)
+		
 		// Create OAuth2 token from stored tokens
 		token := &oauth2.Token{
 			AccessToken:  installation.AccessToken,
@@ -129,15 +139,20 @@ func handleGoogleChatCommand(event GoogleChatEvent, service *services.KudosServi
 		client := oauthConfig.Client(ctx, token)
 		chatService, err := chat.NewService(ctx, option.WithHTTPClient(client))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create chat service: %v", err)
+			log.Printf("Failed to create chat service: %v", err)
+			// Fall back to using user ID as username
+			kudos.Username = kudos.UserID
+		} else {
+			// Try to get user info - in Google Chat, this might not be directly available
+			// For now, we'll use the user ID as the username
+			kudos.Username = kudos.UserID
+			// Suppress unused variable warning
+			_ = chatService
 		}
-		
-		// Try to get user info - in Google Chat, this might not be directly available
-		// For now, we'll use the user ID as the username
-		kudos.Username = kudos.UserID
-		
-		// Suppress unused variable warning
-		_ = chatService
+	}
+
+	if kudos.Username == "" {
+		return nil, errors.New("❌ Unable to resolve user information")
 	}
 
 	// Extract organization ID from space
@@ -148,6 +163,13 @@ func handleGoogleChatCommand(event GoogleChatEvent, service *services.KudosServi
 	if senderName == "" {
 		senderName = event.Message.Sender.Name
 	}
+	
+	if senderName == "" {
+		log.Printf("Missing sender information in event")
+		return nil, errors.New("❌ Unable to identify sender")
+	}
+
+	log.Printf("Processing kudos: from=%s, to=%s, description=%s", senderName, kudos.Username, kudos.Description)
 
 	kudosPayload := services.KudosPayload{
 		OrganizationId: orgId,
@@ -159,7 +181,8 @@ func handleGoogleChatCommand(event GoogleChatEvent, service *services.KudosServi
 
 	kudosResponse, err := service.HandleKudos(kudosPayload, database)
 	if err != nil {
-		return nil, err
+		log.Printf("Kudos service error: %v", err)
+		return nil, fmt.Errorf("❌ Failed to process kudos: %s", err.Error())
 	}
 
 	// Create the @mention format for the response
@@ -171,8 +194,10 @@ func handleGoogleChatCommand(event GoogleChatEvent, service *services.KudosServi
 	}
 
 	// Create response message for Google Chat
-	responseText := fmt.Sprintf("Kudos to %s for %s! 🎉\nThey now have %d total kudos.", 
+	responseText := fmt.Sprintf("🎉 Kudos to %s for %s!\n\nThey now have **%d** total kudos.", 
 		userMention, kudos.Description, kudosResponse.Total)
+
+	log.Printf("Kudos processed successfully: total=%d", kudosResponse.Total)
 
 	return &chat.Message{
 		Text: responseText,
