@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/developertom01/go-kudos/data"
@@ -22,28 +23,46 @@ var (
 
 type Kudos struct {
 	Command     Commands
-	Username    string
-	Description *string
+	UserID      string  // Slack user ID from @mention
+	Username    string  // Resolved username
+	Description string  // Full description text
 }
 
-// eg. /kudos @user kudos for great work
+// eg. /kudos <@U1234567890> kudos for great work
+// or /kudos @username kudos for great work
 func parseCommandText(text string) (*Kudos, error) {
 	// Split the text into parts
-	parts := strings.Split(text, " ")
+	parts := strings.Fields(text)
 
-	if len(parts) < 2 {
+	if len(parts) < 3 {
+		return nil, errors.New("command format: /kudos @user description")
+	}
+
+	if parts[0] != string(KudosCommand) {
 		return nil, invalidCommandError
 	}
 
-	if parts[0] == string(KudosCommand) {
-		return &Kudos{
-			Command:     KudosCommand,
-			Username:    parts[1],
-			Description: &parts[2],
-		}, nil
+	userPart := parts[1]
+	description := strings.Join(parts[2:], " ")
+
+	kudos := &Kudos{
+		Command:     KudosCommand,
+		Description: description,
 	}
 
-	return nil, invalidCommandError
+	// Check if it's a Slack user mention format <@U1234567890>
+	slackMentionRegex := regexp.MustCompile(`^<@([A-Z0-9]+)>$`)
+	if matches := slackMentionRegex.FindStringSubmatch(userPart); len(matches) > 1 {
+		kudos.UserID = matches[1]
+		// Username will be resolved via Slack API
+	} else if strings.HasPrefix(userPart, "@") {
+		// Legacy @username format
+		kudos.Username = strings.TrimPrefix(userPart, "@")
+	} else {
+		return nil, errors.New("user must be mentioned with @ or Slack @mention format")
+	}
+
+	return kudos, nil
 }
 
 func handleSlashCommand(slashCommand slack.SlashCommand, service *services.KudosService, slackApi *slack.Client, database *data.Database) error {
@@ -57,12 +76,18 @@ func handleSlashCommand(slashCommand slack.SlashCommand, service *services.Kudos
 	installedSlackApi := slack.New(installation.BotUserOAuthToken)
 	
 	kudos, err := parseCommandText(slashCommand.Text)
-
 	if err != nil {
 		return err
 	}
 
-	kudos.Username = strings.TrimPrefix(kudos.Username, "@")
+	// Resolve Slack user ID to username if needed
+	if kudos.UserID != "" {
+		user, err := installedSlackApi.GetUserInfo(kudos.UserID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve user: %v", err)
+		}
+		kudos.Username = user.Name
+	}
 
 	var orgId = slashCommand.EnterpriseID
 	if orgId == "" {
@@ -71,34 +96,38 @@ func handleSlashCommand(slashCommand slack.SlashCommand, service *services.Kudos
 
 	kudosPayload := services.KudosPayload{
 		OrganizationId: orgId,
-		ToUsername:       kudos.Username,
-		Description:    *kudos.Description,
+		ToUsername:     kudos.Username,
+		Description:    kudos.Description,
 		InstallationId: slashCommand.APIAppID,
-		FromUsername:     slashCommand.UserName,
+		FromUsername:   slashCommand.UserName,
 	}
 
 	kudosResponse, err := service.HandleKudos(kudosPayload, database)
-
 	if err != nil {
 		return err
+	}
+
+	// Create the @mention format for the response
+	var userMention string
+	if kudos.UserID != "" {
+		userMention = fmt.Sprintf("<@%s>", kudos.UserID)
+	} else {
+		userMention = fmt.Sprintf("@%s", kudos.Username)
 	}
 
 	// Send the response back to Slack using the installation-specific client
-	text, atch, err := installedSlackApi.PostMessage(slashCommand.ChannelID, slack.MsgOptionText(
-		fmt.Sprintf("Kudos to %s for %s", kudos.Username, *kudos.Description), false),
-		slack.MsgOptionText(fmt.Sprintf("You now have %d kudos", kudosResponse.Total), false),
-		slack.MsgOptionTS(slashCommand.TriggerID),
-		slack.MsgOptionAsUser(true),
+	_, _, err = installedSlackApi.PostMessage(slashCommand.ChannelID, 
+		slack.MsgOptionText(
+			fmt.Sprintf("Kudos to %s for %s! 🎉\nThey now have %d total kudos.", 
+				userMention, kudos.Description, kudosResponse.Total), 
+			false),
+		slack.MsgOptionAsUser(false),
 		slack.MsgOptionIconEmoji(":tada:"),
-		slack.MsgOptionReplaceOriginal(slashCommand.ResponseURL),
-		slack.MsgOptionMeMessage(),
 	)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to post message: %v", err)
 	}
-
-	fmt.Println("kudosResponse", text, atch)
 
 	return nil
 }

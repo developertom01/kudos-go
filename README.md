@@ -69,9 +69,22 @@ export PORT=":8080"
 
 ## Usage
 
-After installation, users can use the `/kudos` command:
+After installation, users can use the `/kudos` command with Slack's native @mention functionality:
+
+### Slack @mention format (recommended):
+```
+/kudos <@username> Great work on the project!
+```
+
+### Legacy @username format:
 ```
 /kudos @username Great work on the project!
 ```
 
-The app will now use the proper OAuth tokens for each workspace installation.
+### Features:
+- **Native Slack @mentions**: Use Slack's autocomplete @mention feature for easy user selection
+- **Multi-word descriptions**: Full support for detailed kudos messages
+- **User ID resolution**: Automatically resolves Slack user IDs to usernames
+- **Rich responses**: Responses include @mentions and emoji for better visibility
+
+The app will now use the proper OAuth tokens for each workspace installation and display a rich message in the channel showing the kudos given.
