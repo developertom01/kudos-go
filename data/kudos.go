@@ -43,6 +43,12 @@ type Installation struct {
 
 	InstallationID string `json:"installation_id" gorm:"not null;unique"`
 	Platform       string `json:"platform" gorm:"not null"`
+	
+	// OAuth tokens for Slack
+	AccessToken      string `json:"access_token" gorm:"not null"`
+	BotUserOAuthToken string `json:"bot_user_oauth_token"`
+	TeamID          string `json:"team_id" gorm:"not null"`
+	TeamName        string `json:"team_name"`
 
 	OrganizationID uint         `json:"organization_id" gorm:"not null"`
 	Organization   Organization `gorm:"foreignKey:OrganizationID"`
@@ -103,12 +109,17 @@ func (db *Database) GetKudusCountForUser(installationID string, username string)
 
 
 
-func (db *Database) CreateInstallation(platform string, organizationID uint) (*Installation, error) {
+func (db *Database) CreateInstallation(platform string, organizationID uint, installationID, accessToken, botToken, teamID, teamName string) (*Installation, error) {
 	installation := Installation{
-		Platform:       platform,
-		OrganizationID: organizationID,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		InstallationID:    installationID,
+		Platform:          platform,
+		AccessToken:       accessToken,
+		BotUserOAuthToken: botToken,
+		TeamID:           teamID,
+		TeamName:         teamName,
+		OrganizationID:   organizationID,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
 	}
 
 	tx := db.connection.Create(&installation)
@@ -116,6 +127,17 @@ func (db *Database) CreateInstallation(platform string, organizationID uint) (*I
 	if tx.Error != nil {
 		return nil, tx.Error
 	}
+	return &installation, nil
+}
+
+func (db *Database) GetInstallationByTeamID(teamID string) (*Installation, error) {
+	var installation Installation
+	tx := db.connection.Where("team_id = ?", teamID).First(&installation)
+	
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	
 	return &installation, nil
 }
 

@@ -1,0 +1,47 @@
+{
+  "display_information": {
+    "name": "Kudos Bot",
+    "description": "Give kudos to your teammates and spread positivity in your workspace!",
+    "background_color": "#3f51b5",
+    "long_description": "Kudos Bot makes it easy to recognize and appreciate your teammates' great work. Use the /kudos command with @mentions to give kudos to anyone in your workspace. The bot keeps track of everyone's kudos count and helps build a positive team culture."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Kudos Bot",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/kudos",
+        "url": "https://your-domain.com/kudos",
+        "description": "Give kudos to a teammate",
+        "usage_hint": "@username Great work on the project!",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://your-domain.com/auth/slack/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://your-domain.com/slack/events",
+      "bot_events": []
+    },
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
